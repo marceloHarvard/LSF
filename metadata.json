@@ -1,0 +1,7 @@
+{
+  "name": "LSF-Alvenaria Hybrid Manager",
+  "description": "A comprehensive construction management app for hybrid LSF and Masonry projects, focusing on stage gating, quality control, and real-time status tracking.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
