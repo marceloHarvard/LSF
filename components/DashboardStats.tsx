@@ -1,14 +1,19 @@
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Task, ExecutionStatus, ConstructionSystem, QualityGateStatus } from '../types';
-import { PieChart, BarChart3, CheckCircle2, AlertTriangle, Activity, TrendingUp, CalendarClock } from 'lucide-react';
+import { PieChart, BarChart3, CheckCircle2, AlertTriangle, Activity, TrendingUp, CalendarClock, AlertCircle, Users } from 'lucide-react';
+import { TaskCard } from './TaskCard';
 
 interface DashboardStatsProps {
   tasks: Task[];
+  onTaskClick: (task: Task) => void;
+  onStatusChange?: (taskId: string, newStatus: ExecutionStatus) => void;
 }
 
 // Internal Component for the Progress Chart
 const ProgressChart: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
+  const [hoverData, setHoverData] = useState<{ x: number; y: number; date: string; executors: string[]; pct: number } | null>(null);
+
   const chartData = useMemo(() => {
     if (tasks.length === 0) return null;
 
@@ -30,7 +35,7 @@ const ProgressChart: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
     if (totalTime <= 0) return null;
 
     // 2. Generate Data Points (Daily steps)
-    const points: { date: Date; plannedPct: number; actualPct: number }[] = [];
+    const points: { date: Date; plannedPct: number; actualPct: number; executors: string[] }[] = [];
     let currentDate = new Date(minDate);
     const totalTasks = tasks.length;
 
@@ -41,16 +46,26 @@ const ProgressChart: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
       const plannedCount = tasks.filter(t => new Date(t.dateEndExpected).getTime() <= time).length;
 
       // Actual: Count tasks where status is EXECUTED AND (gate date or end date) <= currentDate
-      const actualCount = tasks.filter(t => {
+      const completedTasksUntilNow = tasks.filter(t => {
         if (t.status !== ExecutionStatus.EXECUTADO) return false;
         const doneDate = t.gate.date ? new Date(t.gate.date).getTime() : new Date(t.dateEndExpected).getTime();
         return doneDate <= time;
-      }).length;
+      });
+
+      // Find executors specifically for THIS day (for the tooltip)
+      const tasksCompletedOnThisDay = tasks.filter(t => {
+        if (t.status !== ExecutionStatus.EXECUTADO) return false;
+        const doneDate = t.gate.date ? new Date(t.gate.date) : new Date(t.dateEndExpected);
+        return doneDate.toDateString() === currentDate.toDateString();
+      });
+
+      const uniqueExecutors: string[] = Array.from(new Set(tasksCompletedOnThisDay.map(t => t.executor)));
 
       points.push({
         date: new Date(currentDate),
         plannedPct: (plannedCount / totalTasks) * 100,
-        actualPct: (actualCount / totalTasks) * 100
+        actualPct: (completedTasksUntilNow.length / totalTasks) * 100,
+        executors: uniqueExecutors
       });
 
       // Advance 1 day
@@ -81,9 +96,9 @@ const ProgressChart: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
   const actualArea = `${actualPath} L ${getX(chartData.length - 1)} ${height - padding} L ${padding} ${height - padding} Z`;
 
   return (
-    <div className="w-full overflow-x-auto">
-      <div className="min-w-[600px]">
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto font-sans text-[10px]">
+    <div className="w-full overflow-x-auto relative group">
+      <div className="min-w-[600px] relative">
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto font-sans text-[10px] overflow-visible">
           {/* Grid Lines (25%, 50%, 75%, 100%) */}
           {[0, 25, 50, 75, 100].map(pct => (
             <g key={pct}>
@@ -109,6 +124,38 @@ const ProgressChart: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
           <path d={actualArea} fill="url(#gradGreen)" />
           <path d={actualPath} fill="none" stroke="#16a34a" strokeWidth="3" />
 
+          {/* Interactive Points on Green Line */}
+          {chartData.map((pt, i) => (
+            <g key={i}>
+              {/* Invisible Hit Area (Larger) */}
+              <circle
+                cx={getX(i)}
+                cy={getY(pt.actualPct)}
+                r={6}
+                fill="transparent"
+                className="cursor-pointer"
+                onMouseEnter={() => setHoverData({
+                  x: getX(i),
+                  y: getY(pt.actualPct),
+                  date: pt.date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+                  executors: pt.executors,
+                  pct: Math.round(pt.actualPct)
+                })}
+                onMouseLeave={() => setHoverData(null)}
+              />
+              {/* Visible Dot on Hover or if Executor present */}
+              <circle 
+                cx={getX(i)}
+                cy={getY(pt.actualPct)}
+                r={hoverData?.x === getX(i) ? 4 : (pt.executors.length > 0 ? 3 : 0)}
+                fill={hoverData?.x === getX(i) ? "#fff" : "#16a34a"}
+                stroke="#16a34a"
+                strokeWidth={2}
+                className={`transition-all duration-200 pointer-events-none ${hoverData?.x === getX(i) ? 'opacity-100 scale-125' : (pt.executors.length > 0 ? 'opacity-100' : 'opacity-0')}`}
+              />
+            </g>
+          ))}
+
           {/* X-Axis Labels (First, Middle, Last) */}
           <text x={getX(0)} y={height} fill="#64748b" textAnchor="start">{chartData[0].date.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'})}</text>
           <text x={getX(Math.floor(chartData.length / 2))} y={height} fill="#64748b" textAnchor="middle">{chartData[Math.floor(chartData.length / 2)].date.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'})}</text>
@@ -123,12 +170,44 @@ const ProgressChart: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
              <text x="85" y="10" fill="#16a34a" fontSize="10" fontWeight="bold">Realizado</text>
           </g>
         </svg>
+
+        {/* Tooltip DOM Overlay */}
+        {hoverData && (
+          <div 
+            className="absolute z-20 pointer-events-none bg-slate-800 text-white text-xs rounded-lg shadow-xl p-3 transform -translate-x-1/2 -translate-y-[120%] w-48"
+            style={{ left: `${(hoverData.x / width) * 100}%`, top: `${(hoverData.y / height) * 100}%` }}
+          >
+            <div className="flex justify-between items-center border-b border-slate-600 pb-1 mb-1">
+               <span className="font-bold">{hoverData.date}</span>
+               <span className="text-green-400 font-bold">{hoverData.pct}%</span>
+            </div>
+            
+            {hoverData.executors.length > 0 ? (
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block">Executores:</span>
+                <ul className="space-y-1">
+                  {hoverData.executors.map((exec, idx) => (
+                    <li key={idx} className="flex items-center gap-1.5">
+                       <Users size={10} className="text-lsf-light" />
+                       <span className="truncate">{exec}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <span className="text-slate-400 italic text-[10px]">Sem conclusões nesta data</span>
+            )}
+            
+            {/* Triangle Pointer */}
+            <div className="absolute left-1/2 -bottom-1 w-2 h-2 bg-slate-800 transform -translate-x-1/2 rotate-45"></div>
+          </div>
+        )}
       </div>
     </div>
   );
 };
 
-export const DashboardStats: React.FC<DashboardStatsProps> = ({ tasks }) => {
+export const DashboardStats: React.FC<DashboardStatsProps> = ({ tasks, onTaskClick, onStatusChange }) => {
   const stats = useMemo(() => {
     const total = tasks.length;
     const executed = tasks.filter(t => t.status === ExecutionStatus.EXECUTADO).length;
@@ -144,12 +223,15 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ tasks }) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const overdue = tasks.filter(t => {
+    // Detailed list of overdue tasks for the new section
+    const overdueTasksList = tasks.filter(t => {
       if (t.status === ExecutionStatus.EXECUTADO) return false;
       const [year, month, day] = t.dateEndExpected.split('-').map(Number);
       const end = new Date(year, month - 1, day);
       return end < today;
-    }).length;
+    });
+
+    const overdueCount = overdueTasksList.length;
 
     // System Distribution
     const bySystem = {
@@ -167,14 +249,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ tasks }) => {
       done: executed
     };
 
-    return { total, executed, progress, pendingGates, blocked, overdue, bySystem, byStatus };
+    return { total, executed, progress, pendingGates, blocked, overdue: overdueCount, overdueList: overdueTasksList, bySystem, byStatus };
   }, [tasks]);
 
   // Helpers for safe chart rendering
   const getPercent = (val: number) => stats.total > 0 ? (val / stats.total) * 100 : 0;
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-6 animate-in fade-in duration-500 pb-10">
       
       {/* Top KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -210,12 +292,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ tasks }) => {
           <p className="text-xs text-slate-400 mt-1">Impedimentos ativos</p>
         </div>
 
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex flex-col justify-center">
+        <div className={`bg-white p-4 rounded-xl shadow-sm border ${stats.overdue > 0 ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100'} flex flex-col justify-center`}>
            <div className="flex items-center gap-3 text-slate-500 mb-2">
-             <CalendarClock className={`w-5 h-5 ${stats.overdue > 0 ? 'text-amber-500' : 'text-slate-300'}`} />
-             <span className="text-xs font-bold uppercase tracking-wider">Em Atraso</span>
+             <CalendarClock className={`w-5 h-5 ${stats.overdue > 0 ? 'text-orange-500' : 'text-slate-300'}`} />
+             <span className={`text-xs font-bold uppercase tracking-wider ${stats.overdue > 0 ? 'text-orange-600' : ''}`}>Em Atraso</span>
            </div>
-           <span className={`text-3xl font-black ${stats.overdue > 0 ? 'text-amber-600' : 'text-slate-800'}`}>
+           <span className={`text-3xl font-black ${stats.overdue > 0 ? 'text-orange-600' : 'text-slate-800'}`}>
              {stats.overdue}
            </span>
            <p className="text-xs text-slate-400 mt-1">Tarefas fora do prazo</p>
@@ -349,6 +431,25 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({ tasks }) => {
             <span className="text-xs font-medium text-center">Métricas de produtividade<br/>em breve</span>
         </div>
       </div>
+
+      {/* OVERDUE ALERTS SECTION */}
+      {stats.overdueList.length > 0 && (
+        <div className="animate-in slide-in-from-bottom-5 duration-500 mt-8 border-t pt-8">
+           <h3 className="text-orange-700 font-bold flex items-center gap-2 mb-4 text-lg">
+               <AlertCircle /> Atenção: Tarefas Críticas em Atraso
+           </h3>
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {stats.overdueList.map(task => (
+                <TaskCard 
+                  key={task.id} 
+                  task={task} 
+                  onClick={() => onTaskClick(task)} 
+                  onStatusChange={onStatusChange}
+                />
+              ))}
+           </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,23 +1,54 @@
 
-import React, { useState, useMemo } from 'react';
-import { Task, User, ExecutionStatus, ConstructionSystem, UserRole, ProjectStage } from './types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Task, User, ExecutionStatus, ConstructionSystem, UserRole, ProjectStage, QualityGateStatus, TaskHistoryLog } from './types';
 import { INITIAL_TASKS, MOCK_USERS } from './constants';
 import { TaskCard } from './components/TaskCard';
 import { TaskModal } from './components/TaskModal';
 import { DashboardStats } from './components/DashboardStats';
+import { LoginPage } from './components/LoginPage';
 import { Logo } from './components/Logo';
-import { Filter, BarChart2, KanbanSquare } from 'lucide-react';
+import { Filter, BarChart2, KanbanSquare, Plus, LogOut } from 'lucide-react';
 
 const App: React.FC = () => {
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
-  const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[0]); // Default to GP
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  // App Data State - Load from LocalStorage or use Initial Mocks
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    try {
+      const savedTasks = localStorage.getItem('app_tasks');
+      return savedTasks ? JSON.parse(savedTasks) : INITIAL_TASKS;
+    } catch (error) {
+      console.error('Error loading tasks from localStorage:', error);
+      return INITIAL_TASKS;
+    }
+  });
+
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentView, setCurrentView] = useState<'KANBAN' | 'DASHBOARD'>('DASHBOARD');
+  const [activeDropColumn, setActiveDropColumn] = useState<string | null>(null);
   
   // Filters
   const [filterSystem, setFilterSystem] = useState<string>('ALL');
   const [filterStage, setFilterStage] = useState<string>('ALL');
+  const [filterExecutor, setFilterExecutor] = useState<string>('ALL');
+  const [filterStatus, setFilterStatus] = useState<string>('ALL');
+
+  // Persistence Effect
+  useEffect(() => {
+    localStorage.setItem('app_tasks', JSON.stringify(tasks));
+  }, [tasks]);
+
+  // Handlers
+  const handleLogin = (user: User) => {
+    setCurrentUser(user);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setCurrentView('DASHBOARD'); // Reset view on logout
+  };
 
   const handleTaskClick = (task: Task) => {
     setSelectedTask(task);
@@ -25,16 +56,161 @@ const App: React.FC = () => {
   };
 
   const handleTaskUpdate = (updatedTask: Task) => {
-    setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
+    setTasks(prev => {
+      const oldTask = prev.find(t => t.id === updatedTask.id);
+      
+      // Histórico Logic: Se houve mudança de status, grava no localStorage
+      if (oldTask && oldTask.status !== updatedTask.status && currentUser) {
+        const historyItem: TaskHistoryLog = {
+          id: Date.now().toString(),
+          taskId: updatedTask.id,
+          previousStatus: oldTask.status,
+          newStatus: updatedTask.status,
+          timestamp: Date.now(),
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role
+        };
+
+        const storageKey = `history_${updatedTask.id}`;
+        const existingHistory = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        localStorage.setItem(storageKey, JSON.stringify([historyItem, ...existingHistory]));
+      }
+
+      const exists = prev.some(t => t.id === updatedTask.id);
+      if (exists) {
+        return prev.map(t => t.id === updatedTask.id ? updatedTask : t);
+      }
+      return [...prev, updatedTask];
+    });
+    
+    // Keep selected task in sync if it's the one currently open
+    if (selectedTask?.id === updatedTask.id) {
+      setSelectedTask(updatedTask);
+    }
   };
+
+  const handleAddNewTask = () => {
+    if (!currentUser) return;
+    const newTask: Task = {
+      id: Date.now().toString(),
+      title: 'Nova Tarefa',
+      description: '',
+      stage: ProjectStage.PRELIMINAR,
+      system: ConstructionSystem.LSF,
+      specialist: currentUser.role === UserRole.GP ? currentUser.name : 'GP',
+      executor: 'Equipe de Campo',
+      dateStartExpected: new Date().toISOString().split('T')[0],
+      dateEndExpected: new Date().toISOString().split('T')[0],
+      status: ExecutionStatus.AGUARDANDO_START,
+      gate: { status: QualityGateStatus.PENDENTE, notes: '' },
+      isTransitionPoint: false,
+      photos: [],
+      subtasks: []
+    };
+    setSelectedTask(newTask);
+    setIsModalOpen(true);
+  };
+
+  // Helper for Swipe and other quick status changes
+  const handleSwipeStatusChange = (taskId: string, newStatus: ExecutionStatus) => {
+     const task = tasks.find(t => t.id === taskId);
+     if (!task) return;
+
+     const updated = { ...task, status: newStatus };
+     
+     if (newStatus === ExecutionStatus.PARALISADO) {
+         updated.stopReason = 'Paralisado via Swipe (Motivo pendente)';
+     } else {
+         updated.stopReason = undefined;
+     }
+
+     if (newStatus === ExecutionStatus.EXECUTADO && task.status !== ExecutionStatus.EXECUTADO) {
+        // Reset Gate when newly executed
+        updated.gate = { status: QualityGateStatus.PENDENTE, notes: '' };
+     }
+
+     handleTaskUpdate(updated);
+  };
+
+  const uniqueExecutors = useMemo(() => {
+    const execs = tasks.map(t => t.executor);
+    return Array.from(new Set(execs)).sort();
+  }, [tasks]);
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(task => {
       if (filterSystem !== 'ALL' && task.system !== filterSystem) return false;
       if (filterStage !== 'ALL' && task.stage !== filterStage) return false;
+      if (filterExecutor !== 'ALL' && task.executor !== filterExecutor) return false;
+      if (filterStatus !== 'ALL' && task.status !== filterStatus) return false;
       return true;
     });
-  }, [tasks, filterSystem, filterStage]);
+  }, [tasks, filterSystem, filterStage, filterExecutor, filterStatus]);
+
+  // Drag and Drop Handlers
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, taskId: string) => {
+    e.dataTransfer.setData('taskId', taskId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>, colId: string) => {
+    e.preventDefault(); // Necessary to allow dropping
+    if (activeDropColumn !== colId) {
+      setActiveDropColumn(colId);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    // Check if we are really leaving the container and not just entering a child
+    const related = e.relatedTarget as HTMLElement;
+    if (related && e.currentTarget.contains(related)) return;
+    setActiveDropColumn(null);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>, targetColumnId: string) => {
+    e.preventDefault();
+    setActiveDropColumn(null);
+    const taskId = e.dataTransfer.getData('taskId');
+    const task = tasks.find(t => t.id === taskId);
+    
+    if (!task) return;
+
+    let newStatus: ExecutionStatus;
+
+    // Determine target status based on column
+    switch (targetColumnId) {
+      case 'todo':
+        newStatus = ExecutionStatus.AGUARDANDO_START;
+        break;
+      case 'wip':
+        // If already in WIP status, keep it as is
+        if ([ExecutionStatus.INICIADO, ExecutionStatus.EM_ANDAMENTO, ExecutionStatus.PARALISADO].includes(task.status)) {
+           return; 
+        }
+        newStatus = ExecutionStatus.EM_ANDAMENTO;
+        break;
+      case 'done':
+        newStatus = ExecutionStatus.EXECUTADO;
+        break;
+      default:
+        return;
+    }
+
+    if (task.status === newStatus) return;
+
+    const updatedTask = { ...task, status: newStatus };
+
+    // Clean up Block Reason if moving out of blocked state implicitly
+    updatedTask.stopReason = undefined;
+
+    // Reset Gate if moving out of Done
+    if (task.status === ExecutionStatus.EXECUTADO && newStatus !== ExecutionStatus.EXECUTADO) {
+       updatedTask.gate = { ...updatedTask.gate, status: QualityGateStatus.PENDENTE, notes: '' };
+    }
+
+    handleTaskUpdate(updatedTask);
+  };
 
   // Kanban Columns
   const columns = [
@@ -43,8 +219,13 @@ const App: React.FC = () => {
     { id: 'done', title: 'Executado / Gate', statuses: [ExecutionStatus.EXECUTADO] },
   ];
 
+  // --- RENDER LOGIN PAGE IF NOT AUTHENTICATED ---
+  if (!currentUser) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
   return (
-    <div className="flex flex-col h-screen bg-slate-50">
+    <div className="flex flex-col h-screen bg-slate-50 relative">
       
       {/* Navigation Bar */}
       <header className="bg-lsf-dark text-white shadow-md z-20 flex-none transition-all duration-300">
@@ -74,24 +255,21 @@ const App: React.FC = () => {
              </button>
           </div>
 
-          {/* User Switcher (For Demo) */}
-          <div className="flex items-center gap-2">
-             <div className="hidden md:flex flex-col items-end mr-2">
-                <span className="text-[10px] text-slate-400 uppercase tracking-wider">Logado como</span>
-                <span className="text-xs font-bold">{currentUser.name.split(' ')[0]}</span>
+          {/* User Profile & Logout */}
+          <div className="flex items-center gap-3 border-l border-slate-700 pl-4 ml-2">
+             <div className="hidden md:flex flex-col items-end">
+                <span className="text-xs font-bold leading-none">{currentUser.name.split(' ')[0]}</span>
+                <span className="text-[9px] text-lsf-light uppercase tracking-wider font-bold">{currentUser.role}</span>
              </div>
+             
+             <img src={currentUser.avatar} alt="User" className="w-9 h-9 rounded-full border-2 border-lsf-light" />
+             
              <button 
-               onClick={() => {
-                 const nextIndex = (MOCK_USERS.findIndex(u => u.id === currentUser.id) + 1) % MOCK_USERS.length;
-                 setCurrentUser(MOCK_USERS[nextIndex]);
-               }}
-               className="relative"
-               title="Clique para alternar usuário"
+               onClick={handleLogout}
+               className="p-2 bg-slate-800 rounded-full hover:bg-red-500 hover:text-white text-slate-400 transition-colors"
+               title="Sair do Sistema"
              >
-               <img src={currentUser.avatar} alt="User" className="w-9 h-9 rounded-full border-2 border-lsf-light hover:scale-105 transition-transform" />
-               <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-lsf-light rounded-full border-2 border-lsf-dark flex items-center justify-center text-[8px] font-bold text-lsf-dark">
-                  {currentUser.role.charAt(0)}
-               </div>
+               <LogOut size={16} />
              </button>
           </div>
         </div>
@@ -114,7 +292,7 @@ const App: React.FC = () => {
       </div>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-hidden flex flex-col">
+      <main className="flex-1 overflow-hidden flex flex-col relative">
         
         {/* Common Filter Bar */}
         <div className="bg-white border-b px-4 py-3 flex-none z-10">
@@ -148,6 +326,30 @@ const App: React.FC = () => {
                    <option value={ProjectStage.VEDACAO_INFRA}>3. Vedação/Infra</option>
                    <option value={ProjectStage.COBERTURA_ACABAMENTO}>4. Cobertura</option>
                 </select>
+
+                <select 
+                  className="text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-md px-3 py-1.5 focus:bg-white focus:ring-2 focus:ring-lsf-accent outline-none cursor-pointer flex-1 sm:flex-none"
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                >
+                   <option value="ALL">Todos Status</option>
+                   <option value={ExecutionStatus.AGUARDANDO_START}>Aguardando Start</option>
+                   <option value={ExecutionStatus.INICIADO}>Iniciado</option>
+                   <option value={ExecutionStatus.EM_ANDAMENTO}>Em Andamento</option>
+                   <option value={ExecutionStatus.PARALISADO}>Paralisado</option>
+                   <option value={ExecutionStatus.EXECUTADO}>Executado</option>
+                </select>
+
+                <select 
+                  className="text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-md px-3 py-1.5 focus:bg-white focus:ring-2 focus:ring-lsf-accent outline-none cursor-pointer flex-1 sm:flex-none"
+                  value={filterExecutor}
+                  onChange={(e) => setFilterExecutor(e.target.value)}
+                >
+                   <option value="ALL">Todos Executores</option>
+                   {uniqueExecutors.map(exec => (
+                     <option key={exec} value={exec}>{exec}</option>
+                   ))}
+                </select>
               </div>
               
               <div className="text-xs text-slate-400 font-medium whitespace-nowrap ml-auto sm:ml-0">
@@ -160,13 +362,26 @@ const App: React.FC = () => {
         <div className="flex-1 overflow-y-auto bg-slate-50">
            {currentView === 'DASHBOARD' ? (
               <div className="max-w-7xl mx-auto p-4 md:p-6">
-                 <DashboardStats tasks={filteredTasks} />
+                 <DashboardStats 
+                    tasks={filteredTasks} 
+                    onTaskClick={handleTaskClick} 
+                    onStatusChange={handleSwipeStatusChange}
+                 />
               </div>
            ) : (
              <div className="h-full overflow-x-auto overflow-y-hidden p-4">
                 <div className="max-w-7xl mx-auto h-full flex gap-4 min-w-[800px] lg:min-w-0">
                   {columns.map(col => (
-                    <div key={col.id} className="flex-1 flex flex-col bg-slate-100 rounded-xl border border-slate-200 max-w-md min-w-[280px] shadow-inner">
+                    <div 
+                      key={col.id} 
+                      className={`
+                        flex-1 flex flex-col rounded-xl border max-w-md min-w-[280px] shadow-inner transition-colors duration-200
+                        ${activeDropColumn === col.id ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-200' : 'bg-slate-100 border-slate-200'}
+                      `}
+                      onDragOver={(e) => handleDragOver(e, col.id)}
+                      onDragLeave={handleDragLeave}
+                      onDrop={(e) => handleDrop(e, col.id)}
+                    >
                        <div className="p-3 border-b border-slate-200 bg-slate-200/50 flex items-center justify-between rounded-t-xl">
                          <h3 className="font-bold text-slate-700 uppercase text-xs tracking-wider flex items-center gap-2">
                            {col.id === 'done' ? <div className="w-2 h-2 rounded-full bg-lsf-light" /> : <div className="w-2 h-2 rounded-full bg-slate-400" />}
@@ -181,18 +396,25 @@ const App: React.FC = () => {
                           {filteredTasks
                             .filter(t => col.statuses.includes(t.status))
                             .map(task => (
-                              <TaskCard 
-                                key={task.id} 
-                                task={task} 
-                                onClick={() => handleTaskClick(task)} 
-                              />
+                              <div 
+                                key={task.id}
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, task.id)}
+                                className="cursor-move active:cursor-grabbing transform transition-transform hover:scale-[1.01]"
+                              >
+                                <TaskCard 
+                                  task={task} 
+                                  onClick={() => handleTaskClick(task)} 
+                                  onStatusChange={handleSwipeStatusChange}
+                                />
+                              </div>
                             ))
                           }
                           
                           {filteredTasks.filter(t => col.statuses.includes(t.status)).length === 0 && (
-                            <div className="h-full flex flex-col items-center justify-center text-slate-400 opacity-50">
+                            <div className="h-full flex flex-col items-center justify-center text-slate-400 opacity-50 pointer-events-none">
                               <KanbanSquare size={48} strokeWidth={1} />
-                              <span className="text-xs italic mt-2">Sem tarefas nesta etapa</span>
+                              <span className="text-xs italic mt-2">Arraste tarefas para cá</span>
                             </div>
                           )}
                        </div>
@@ -203,6 +425,17 @@ const App: React.FC = () => {
            )}
         </div>
       </main>
+      
+      {/* Floating Action Button (New Task) */}
+      {currentUser.role !== UserRole.CLIENT && (
+         <button
+            onClick={handleAddNewTask}
+            className="fixed bottom-6 right-6 bg-lsf-dark text-white p-4 rounded-full shadow-xl hover:bg-slate-800 transition-all hover:scale-105 active:scale-95 z-40 flex items-center justify-center border-2 border-lsf-light group"
+            title="Nova Tarefa"
+         >
+            <Plus size={24} className="group-hover:rotate-90 transition-transform" />
+         </button>
+      )}
 
       <TaskModal 
         task={selectedTask} 
@@ -216,3 +449,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+    

@@ -1,3 +1,4 @@
+
 export enum UserRole {
   CLIENT = 'CLIENT', // Contratante
   EXECUTOR = 'EXECUTOR', // Executor de Campo
@@ -54,6 +55,23 @@ export interface TaskPhoto {
   description?: string;
 }
 
+export interface Subtask {
+  id: string;
+  title: string;
+  completed: boolean;
+}
+
+export interface TaskHistoryLog {
+  id: string;
+  taskId: string;
+  previousStatus: ExecutionStatus;
+  newStatus: ExecutionStatus;
+  timestamp: number;
+  userId: string;
+  userName: string;
+  userRole: UserRole;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -74,4 +92,5 @@ export interface Task {
   transitionTag?: string; // e.g., #ConexãoHidráulica
   
   photos: TaskPhoto[];
+  subtasks: Subtask[];
 }

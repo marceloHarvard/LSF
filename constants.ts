@@ -21,7 +21,11 @@ export const INITIAL_TASKS: Task[] = [
     gate: { status: QualityGateStatus.APROVADO, notes: 'Liberado para carga.', checkedBy: 'u1', date: '2023-10-04' },
     isTransitionPoint: true,
     transitionTag: '#VigaTransição',
-    photos: []
+    photos: [],
+    subtasks: [
+      { id: 'st1', title: 'Verificar trincas na viga V1', completed: true },
+      { id: 'st2', title: 'Medir nivelamento', completed: true }
+    ]
   },
   {
     id: 't2',
@@ -39,7 +43,8 @@ export const INITIAL_TASKS: Task[] = [
     transitionTag: '#Ancoragem',
     photos: [
       { id: 'p1', url: 'https://picsum.photos/id/201/400/300', timestamp: 1696500000, description: 'Detalhe chumbador' }
-    ]
+    ],
+    subtasks: []
   },
   {
     id: 't3',
@@ -54,7 +59,8 @@ export const INITIAL_TASKS: Task[] = [
     status: ExecutionStatus.EM_ANDAMENTO,
     gate: { status: QualityGateStatus.PENDENTE, notes: '' },
     isTransitionPoint: false,
-    photos: []
+    photos: [],
+    subtasks: []
   },
   {
     id: 't4',
@@ -70,7 +76,8 @@ export const INITIAL_TASKS: Task[] = [
     stopReason: 'Falta de eletrodutos corrugados 3/4"',
     gate: { status: QualityGateStatus.PENDENTE, notes: '' },
     isTransitionPoint: false,
-    photos: []
+    photos: [],
+    subtasks: []
   },
   {
     id: 't5',
@@ -86,6 +93,7 @@ export const INITIAL_TASKS: Task[] = [
     gate: { status: QualityGateStatus.PENDENTE, notes: '' },
     isTransitionPoint: true,
     transitionTag: '#ConexãoHidráulica',
-    photos: []
+    photos: [],
+    subtasks: []
   }
 ];
