@@ -224,6 +224,8 @@ const App: React.FC = () => {
     return <LoginPage onLogin={handleLogin} />;
   }
 
+  const isClient = currentUser.role === UserRole.CLIENT;
+
   return (
     <div className="flex flex-col h-screen bg-slate-50 relative">
       
@@ -365,7 +367,7 @@ const App: React.FC = () => {
                  <DashboardStats 
                     tasks={filteredTasks} 
                     onTaskClick={handleTaskClick} 
-                    onStatusChange={handleSwipeStatusChange}
+                    onStatusChange={isClient ? undefined : handleSwipeStatusChange}
                  />
               </div>
            ) : (
@@ -378,9 +380,9 @@ const App: React.FC = () => {
                         flex-1 flex flex-col rounded-xl border max-w-md min-w-[280px] shadow-inner transition-colors duration-200
                         ${activeDropColumn === col.id ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-200' : 'bg-slate-100 border-slate-200'}
                       `}
-                      onDragOver={(e) => handleDragOver(e, col.id)}
+                      onDragOver={(e) => !isClient && handleDragOver(e, col.id)}
                       onDragLeave={handleDragLeave}
-                      onDrop={(e) => handleDrop(e, col.id)}
+                      onDrop={(e) => !isClient && handleDrop(e, col.id)}
                     >
                        <div className="p-3 border-b border-slate-200 bg-slate-200/50 flex items-center justify-between rounded-t-xl">
                          <h3 className="font-bold text-slate-700 uppercase text-xs tracking-wider flex items-center gap-2">
@@ -398,14 +400,14 @@ const App: React.FC = () => {
                             .map(task => (
                               <div 
                                 key={task.id}
-                                draggable
-                                onDragStart={(e) => handleDragStart(e, task.id)}
-                                className="cursor-move active:cursor-grabbing transform transition-transform hover:scale-[1.01]"
+                                draggable={!isClient}
+                                onDragStart={(e) => !isClient && handleDragStart(e, task.id)}
+                                className={`${!isClient ? 'cursor-move active:cursor-grabbing' : ''} transform transition-transform hover:scale-[1.01]`}
                               >
                                 <TaskCard 
                                   task={task} 
                                   onClick={() => handleTaskClick(task)} 
-                                  onStatusChange={handleSwipeStatusChange}
+                                  onStatusChange={isClient ? undefined : handleSwipeStatusChange}
                                 />
                               </div>
                             ))
@@ -427,7 +429,7 @@ const App: React.FC = () => {
       </main>
       
       {/* Floating Action Button (New Task) */}
-      {currentUser.role !== UserRole.CLIENT && (
+      {!isClient && (
          <button
             onClick={handleAddNewTask}
             className="fixed bottom-6 right-6 bg-lsf-dark text-white p-4 rounded-full shadow-xl hover:bg-slate-800 transition-all hover:scale-105 active:scale-95 z-40 flex items-center justify-center border-2 border-lsf-light group"
@@ -449,4 +451,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-    
